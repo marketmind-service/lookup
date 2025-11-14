@@ -1,19 +1,23 @@
-name: Build & push to GHCR
+name: Build and deploy lookup
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: marketmind-service/lookup
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: read
       packages: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,7 +29,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push image to GHCR
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -34,3 +38,20 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.LOOKUP_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.LOOKUP_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.LOOKUP_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy container app
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          containerAppName: lookup
+          resourceGroup: group9
+          registryUrl: ghcr.io
+          registryUsername: ${{ secrets.LOOKUP_REGISTRY_USERNAME }}    # or drop these if image is public and ACA has no creds configured
+          registryPassword: ${{ secrets.LOOKUP_REGISTRY_PASSWORD }}
+          imageToDeploy: ghcr.io/marketmind-service/lookup:${{ github.sha }}
