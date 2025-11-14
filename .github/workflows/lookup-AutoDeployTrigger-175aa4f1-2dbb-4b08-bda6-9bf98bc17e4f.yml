@@ -42,7 +42,7 @@ jobs:
           registryPassword: ${{ secrets.LOOKUP_REGISTRY_PASSWORD }}
           containerAppName: lookup
           resourceGroup: group9
-          imageToBuild: ghcr.io/lookup:${{ github.sha }}
+          imageToBuild: ghcr.io/marketmind-service/lookup:${{ github.sha }}
           _buildArgumentsKey_: |
             _buildArgumentsValues_
 
