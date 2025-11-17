@@ -52,6 +52,6 @@ jobs:
           containerAppName: lookup
           resourceGroup: group9
           registryUrl: ghcr.io
-          registryUsername: ${{ secrets.LOOKUP_REGISTRY_USERNAME }}    # or drop these if image is public and ACA has no creds configured
+          registryUsername: ${{ secrets.LOOKUP_REGISTRY_USERNAME }}
           registryPassword: ${{ secrets.LOOKUP_REGISTRY_PASSWORD }}
           imageToDeploy: ghcr.io/marketmind-service/lookup:${{ github.sha }}
