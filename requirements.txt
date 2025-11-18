@@ -3,3 +3,4 @@ numpy~=2.3.5
 pandas~=2.3.3
 yfinance~=0.2.66
 yahooquery~=2.4.1
+uvicorn[standard]~=0.38.0
