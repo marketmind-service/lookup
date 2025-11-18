@@ -50,7 +50,7 @@ jobs:
         uses: azure/container-apps-deploy-action@v2
         with:
           containerAppName: lookup
-          resourceGroup: group9
+          resourceGroup: marketmind
           registryUrl: ghcr.io
           registryUsername: ${{ secrets.LOOKUP_REGISTRY_USERNAME }}
           registryPassword: ${{ secrets.LOOKUP_REGISTRY_PASSWORD }}
