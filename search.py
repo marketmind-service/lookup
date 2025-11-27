@@ -1,23 +1,124 @@
-#!/usr/bin/env python3
-# stock_lookup.py
-
 import sys
 import re
 from typing import Optional, Tuple, Dict, Any
-
 import numpy as np
 import pandas as pd
 import yfinance as yf
+from state import LookupState
 
-# Optional name -> ticker search
+# optional name -> ticker search
 try:
     from yahooquery import search as yq_search  # type: ignore
+
     HAVE_YQ = True
 except Exception:
     HAVE_YQ = False
 
+_INTERVAL_MINUTES = {
+    "1m": 1,
+    "2m": 2,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "60m": 60,
+    "90m": 90,
+    "1h": 60,
+    "4h": 240,
+    "1d": 24 * 60,
+    "5d": 5 * 24 * 60,
+    "1wk": 7 * 24 * 60,
+    "1mo": 30 * 24 * 60,
+    "3mo": 90 * 24 * 60,
+}
 
-# Exchange code and name whitelists for US and CA
+DEFAULT_PERIOD = "1mo"
+DEFAULT_INTERVAL = "1d"
+
+
+def _period_to_days(period: str) -> Optional[float]:
+    m = re.fullmatch(r"(\d+)\s*([a-zA-Z]+)", period.strip().lower())
+    if not m:
+        return None
+
+    value = int(m.group(1))
+    unit = m.group(2)
+
+    if unit in {"m", "min", "mins", "minute", "minutes"}:
+        return value / (60 * 24)
+    if unit in {"h", "hr", "hrs", "hour", "hours"}:
+        return value / 24
+    if unit in {"d", "day", "days"}:
+        return float(value)
+    if unit in {"wk", "wks", "w", "week", "weeks"}:
+        return value * 7.0
+    if unit in {"mo", "mon", "mons", "month", "months"}:
+        return value * 30.0
+    if unit in {"y", "yr", "yrs", "year", "years"}:
+        return value * 365.0
+    return None
+
+
+def _infer_interval_from_period(period: str) -> str:
+    days = _period_to_days(period)
+    if days is None:
+        return DEFAULT_INTERVAL
+    if days <= 2:
+        return "5m"
+    if days <= 7:
+        return "15m"
+    if days <= 30:
+        return "1h"
+    if days <= 90:
+        return "1d"
+    if days <= 365:
+        return "1d"
+
+    return "1wk"
+
+
+def _infer_period_from_interval(interval: str) -> str:
+    mins = _INTERVAL_MINUTES.get(interval)
+    if mins is None:
+        return DEFAULT_PERIOD
+    if mins <= 15:
+        return "5d"
+    if mins <= 60:
+        return "1mo"
+    if mins <= 240:
+        return "3mo"
+    if interval == "1d":
+        return "1y"
+    if interval in {"5d", "1wk"}:
+        return "3y"
+    if interval in {"1mo", "3mo"}:
+        return "5y"
+
+    return DEFAULT_PERIOD
+
+
+def _resolve_period_interval(period: Optional[str], interval: Optional[str]) -> Tuple[str, str]:
+    per = period
+    ivl = interval
+
+    # nothing in prompt
+    if not per and not ivl:
+        return DEFAULT_PERIOD, DEFAULT_INTERVAL
+
+    # period only
+    if per and not ivl:
+        ivl = _infer_interval_from_period(per)
+        return per, ivl
+
+    # interval only
+    if ivl and not per:
+        per = _infer_period_from_interval(ivl)
+        return per, ivl
+
+    # both
+    return per, ivl
+
+
+# exchange code and name whitelists for US and CA
 EXCHANGE_CODES_US = {"NMS", "NCM", "NGM", "NYQ", "ASE", "PCX", "BATS", "CBOE"}
 EXCHANGE_NAMES_US = {"NASDAQ", "NYSE", "NYSE ARCA", "NYSE AMERICAN", "ARCA", "AMEX", "CBOE", "BATS"}
 
@@ -26,7 +127,7 @@ EXCHANGE_NAMES_CA = {"TORONTO", "TSX", "TSX VENTURE", "NEO", "CANADIAN SECURITIE
 
 CA_SUFFIXES = {"TO", "V", "NE", "CN"}
 
-# Tight ticker regex so words like "nvidia" do not look like tickers
+# ticker regex so words like nvidia do not look like tickers
 TICKER_RE = re.compile(r"^[A-Z0-9]{1,5}(\.(TO|V|NE|CN))?$")
 
 
@@ -39,29 +140,28 @@ def _exchange_is_us_ca(exch: Optional[str], currency: Optional[str] = None) -> b
     u = (exch or "").upper()
     if u in EXCHANGE_CODES_US or u in EXCHANGE_CODES_CA:
         return True
+
     names = EXCHANGE_NAMES_US | EXCHANGE_NAMES_CA
     if any(name in u for name in names):
         return True
+
     if currency and currency.upper() in {"USD", "CAD"}:
         return True
+
     return False
 
 
 def _symbol_is_us_ca(sym: str) -> bool:
     s = sym.upper()
     if "." not in s:
-        # No suffix means US on Yahoo for normal equities
         return 1 <= len(s) <= 5
+
     suf = s.rsplit(".", 1)[-1]
     return suf in CA_SUFFIXES
 
 
 def resolve_symbol(query: str) -> Tuple[str, Optional[str], Optional[str]]:
-    """
-    Returns (symbol, longname, exchangeName) for US or CA only.
-    """
     q = query.strip()
-
     if is_likely_ticker(q):
         sym = q.upper()
         if not _symbol_is_us_ca(sym):
@@ -89,7 +189,7 @@ def resolve_symbol(query: str) -> Tuple[str, Optional[str], Optional[str]]:
         s = 0
         if item.get("quoteType") == "EQUITY":
             s += 5
-        name_blob = f"{item.get('longname','')} {item.get('shortname','')}".lower()
+        name_blob = f"{item.get('longname', '')} {item.get('shortname', '')}".lower()
         if q.lower() in name_blob:
             s += 2
         exch = (item.get("exchange") or item.get("fullExchangeName") or "")
@@ -106,11 +206,6 @@ def resolve_symbol(query: str) -> Tuple[str, Optional[str], Optional[str]]:
 
 
 def _pick_series(df_like: Any, symbol: str, field_name: str) -> pd.Series:
-    """
-    Given df[field_name] which can be Series or DataFrame with multiple tickers,
-    pick a single 1D Series. Prefer the exact ticker if present, otherwise the
-    column with the most data.
-    """
     if isinstance(df_like, pd.Series):
         return pd.to_numeric(df_like, errors="coerce")
 
@@ -120,15 +215,12 @@ def _pick_series(df_like: Any, symbol: str, field_name: str) -> pd.Series:
     if df_like.shape[1] == 0:
         raise ValueError(f"No data in column '{field_name}'")
 
-    cols = list(df_like.columns)
-    # Try exact symbol match first
     if symbol in df_like.columns:
         s = df_like[symbol]
-        return pd.to_numeric(s, errors="coerce")
+    else:
+        best_col = df_like.count().idxmax()
+        s = df_like[best_col]
 
-    # Otherwise pick the densest column
-    best_col = df_like.count().idxmax()
-    s = df_like[best_col]
     return pd.to_numeric(s, errors="coerce")
 
 
@@ -137,21 +229,17 @@ def fetch_ohlcv(symbol: str, period: str, interval: str) -> pd.DataFrame:
     if df_raw is None or df_raw.empty:
         raise ValueError(f"Could not fetch OHLCV for {symbol} with period={period} interval={interval}")
 
-    # Normalize to single Series per field, even if yahoo returns multi-index or multi-ticker frames
-    # df_raw['X'] might be Series or a DataFrame of tickers
     fields = {}
     for field in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
         if field in df_raw.columns:
             fields[field] = _pick_series(df_raw[field], symbol, field)
         else:
-            # Sometimes Adj Close is missing intraday
             if field == "Adj Close" and "Close" in df_raw.columns:
                 fields[field] = _pick_series(df_raw["Close"], symbol, "Adj Close")
             else:
                 raise ValueError(f"Field '{field}' missing in downloaded data for {symbol}")
 
     out = pd.DataFrame(fields).sort_index()
-    # Drop rows with everything NaN
     out = out.dropna(how="all")
     if out.empty:
         raise ValueError(f"No valid rows for {symbol} after normalization")
@@ -160,18 +248,21 @@ def fetch_ohlcv(symbol: str, period: str, interval: str) -> pd.DataFrame:
 
 def get_key_info(symbol: str) -> Dict[str, Any]:
     t = yf.Ticker(symbol)
-    info = {}
+    info: Dict[str, Any] = {}
+    fast: Dict[str, Any] = {}
+
     try:
         info = t.get_info() or {}
     except Exception:
         pass
-    fast = {}
+
     try:
         fast = dict(t.fast_info) if hasattr(t, "fast_info") else {}
     except Exception:
         pass
+
     merged = {**fast, **info}
-    out = {
+    return {
         "symbol": symbol.upper(),
         "shortName": merged.get("shortName") or merged.get("longName"),
         "currency": merged.get("currency") or merged.get("currencySymbol") or merged.get("financialCurrency"),
@@ -183,14 +274,17 @@ def get_key_info(symbol: str) -> Dict[str, Any]:
         "beta": merged.get("beta") or merged.get("beta3Year"),
         "fiftyTwoWeekLow": merged.get("fiftyTwoWeekLow"),
         "fiftyTwoWeekHigh": merged.get("fiftyTwoWeekHigh"),
-        "avgVolume": merged.get("averageVolume") or merged.get("averageDailyVolume10Day") or merged.get("threeMonthAverageVolume"),
+        "avgVolume": merged.get("averageVolume")
+                     or merged.get("averageDailyVolume10Day")
+                     or merged.get("threeMonthAverageVolume"),
         "sharesOutstanding": merged.get("sharesOutstanding"),
         "sector": merged.get("sector"),
         "industry": merged.get("industry"),
         "website": merged.get("website"),
-        "lastPrice": merged.get("lastPrice") or merged.get("regularMarketPrice") or merged.get("currentPrice"),
+        "lastPrice": merged.get("lastPrice")
+                     or merged.get("regularMarketPrice")
+                     or merged.get("currentPrice"),
     }
-    return out
 
 
 def humanize_int(n: Optional[float]) -> Optional[str]:
@@ -207,7 +301,6 @@ def humanize_int(n: Optional[float]) -> Optional[str]:
 def compute_quick_stats(df: pd.DataFrame) -> Dict[str, Any]:
     stats: Dict[str, Any] = {}
 
-    # Align and drop NaN rows once, to keep shapes sane
     aligned = df[["High", "Low", "Adj Close", "Volume"]].copy().dropna()
     if aligned.empty:
         return {
@@ -225,7 +318,6 @@ def compute_quick_stats(df: pd.DataFrame) -> Dict[str, Any]:
     lows = aligned["Low"]
     vols = aligned["Volume"]
 
-    # Convert to 1D numpy arrays
     cvals = closes.to_numpy(dtype=float)
     hvals = highs.to_numpy(dtype=float)
     lvals = lows.to_numpy(dtype=float)
@@ -238,15 +330,18 @@ def compute_quick_stats(df: pd.DataFrame) -> Dict[str, Any]:
     else:
         stats["period_return_pct"] = None
 
-    # Annualized volatility from daily pct change
+    # Annualized volatility
     if cvals.size > 2:
         rets = np.diff(cvals) / cvals[:-1]
         rets = rets[np.isfinite(rets)]
-        stats["ann_vol_pct"] = round(float(rets.std(ddof=1) * np.sqrt(252.0)) * 100, 2) if rets.size > 2 else None
+        stats["ann_vol_pct"] = (
+            round(float(rets.std(ddof=1) * np.sqrt(252.0)) * 100, 2)
+            if rets.size > 2 else None
+        )
     else:
         stats["ann_vol_pct"] = None
 
-    # SMAs from pandas to keep it simple
+    # SMAs
     for w in [20, 50, 200]:
         if len(closes) >= w:
             sma = float(closes.rolling(w).mean().iloc[-1])
@@ -285,7 +380,7 @@ def print_summary(meta: Dict[str, Any], quick: Dict[str, Any]) -> None:
 
     print("")
     print("=== Snapshot ===")
-    print(f"Symbol:            {meta.get('symbol','')}")
+    print(f"Symbol:            {meta.get('symbol', '')}")
     print(f"Name:              {meta.get('shortName') or 'n/a'}")
     print(f"Exchange:          {meta.get('exchange') or 'n/a'}")
     print(f"Currency:          {meta.get('currency') or 'n/a'}")
@@ -295,7 +390,7 @@ def print_summary(meta: Dict[str, Any], quick: Dict[str, Any]) -> None:
     print(f"Market Cap:        {humanize_int(meta.get('marketCap')) or 'n/a'}")
     print(f"PE (TTM/Fwd):      {(meta.get('trailingPE') or 'n/a')} / {(meta.get('forwardPE') or 'n/a')}")
     dy = meta.get("dividendYield")
-    print(f"Dividend Yield:    {fmt_pct(dy*100) if isinstance(dy, (int, float)) else 'n/a'}")
+    print(f"Dividend Yield:    {fmt_pct(dy * 100) if isinstance(dy, (int, float)) else 'n/a'}")
     print(f"Beta:              {meta.get('beta') if meta.get('beta') is not None else 'n/a'}")
     print(f"Avg Volume:        {humanize_int(meta.get('avgVolume')) or 'n/a'}")
     print(f"Shares Out:        {humanize_int(meta.get('sharesOutstanding')) or 'n/a'}")
@@ -306,7 +401,10 @@ def print_summary(meta: Dict[str, Any], quick: Dict[str, Any]) -> None:
     print("=== Period Stats ===")
     print(f"Return:            {fmt_pct(quick.get('period_return_pct'))}")
     print(f"Volatility Ann:    {fmt_pct(quick.get('ann_vol_pct'))}")
-    print(f"SMA 20 / 50 / 200: {fmt_num(quick.get('sma_20'))} / {fmt_num(quick.get('sma_50'))} / {fmt_num(quick.get('sma_200'))}")
+    print(
+        f"SMA 20 / 50 / 200: {fmt_num(quick.get('sma_20'))} / "
+        f"{fmt_num(quick.get('sma_50'))} / {fmt_num(quick.get('sma_200'))}"
+    )
     print(f"Avg Volume:        {humanize_int(quick.get('avg_volume')) or 'n/a'}")
     print(f"ATR(14):           {fmt_num(quick.get('atr_14'))}")
     print("")
@@ -351,6 +449,72 @@ def yes_no(prompt: str, default_no: bool = True) -> bool:
     if not s:
         return not default_no
     return s in {"y", "yes", "1", "true", "t"}
+
+
+def search(state: LookupState) -> LookupState:
+    print("Stock Lookup Agent")
+    query = state.ticker
+    if not query:
+        print("No query provided in state. Exiting lookup node.")
+        return state.model_copy(update={
+            "error": "[search.py] No ticker provided. Exiting lookup node.",
+        })
+
+    period, interval = _resolve_period_interval(
+        getattr(state, "period", None),
+        getattr(state, "interval", None),
+    )
+
+    print(f"Using period={period}, interval={interval}")
+
+    try:
+        symbol, longname, exchname = resolve_symbol(query)
+    except ValueError as ve:
+        print(str(ve))
+        return state.model_copy(update={
+            "error": f"[search.py] {str(ve)}"
+        })
+
+    try:
+        df = fetch_ohlcv(symbol, period=period, interval=interval)
+    except Exception as e:
+        print(f"Error fetching data for {symbol}: {e}")
+        return state.model_copy(update={
+            "error": f"[search.py] Error fetching data for {symbol}: {e}"
+        })
+
+    meta = get_key_info(symbol)
+    if longname and not meta.get("shortName"):
+        meta["shortName"] = longname
+
+    exch = meta.get("exchange") or exchname
+    curr = meta.get("currency")
+    if not _exchange_is_us_ca(exch, currency=curr):
+        print(f"Resolved to non-US/CA listing: exchange='{exch}', currency='{curr}'. Only US/CA supported.")
+        return state.model_copy(update={
+            "error": f"[search.py] Resolved to non-US/CA listing: exchange='{exch}', currency='{curr}'. Only US/CA supported."
+        })
+
+    quick = compute_quick_stats(df)
+
+    print_summary(meta, quick)
+    print("=== OHLCV (tail) ===")
+    try:
+        print(df.tail().to_string())
+    except Exception:
+        print(df.tail())
+
+    want_plot = False
+    if want_plot:
+        maybe_plot(df, symbol)
+
+    print("Done.")
+
+    return state.model_copy(update={
+        "ticker": symbol,
+        "period": period,
+        "interval": interval,
+    })
 
 
 def main():

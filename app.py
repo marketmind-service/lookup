@@ -1,58 +1,40 @@
-# app.py
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from state import AgentState, LookupState
+from lookup_agent import lookup_agent
 
-from stock_lookup import (
-    resolve_symbol,
-    fetch_ohlcv,
-    get_key_info,
-    compute_quick_stats,
-    _exchange_is_us_ca,
-)
-
-app = FastAPI(title="Stock Lookup API")
+app = FastAPI(title="Lookup Agent API")
 
 
-@app.get("/api/stock")
-def stock_lookup_api(
-    query: str = Query(..., description="Ticker or company name"),
-    period: str = Query("1y"),
-    interval: str = Query("1d"),
-):
-    """
-    Simple GET endpoint:
-    /api/stock?query=NVDA&period=6mo&interval=1d
-    """
+class LookupRequest(BaseModel):
+    parent_state: AgentState
 
+
+class LookupResponse(BaseModel):
+    state: AgentState
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "lookup_agent"}
+
+
+@app.post("/api/lookup-agent", response_model=LookupResponse)
+async def run_lookup(req: LookupRequest):
     try:
-        symbol, longname, exchname = resolve_symbol(query)
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-
-    try:
-        df = fetch_ohlcv(symbol, period=period, interval=interval)
+        updated_state = await lookup_agent(req.parent_state)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error fetching OHLCV: {e}")
+        raise HTTPException(status_code=500, detail=f"lookup_agent_error: {e}")
 
-    meta = get_key_info(symbol)
-    if longname and not meta.get("shortName"):
-        meta["shortName"] = longname
+    return LookupResponse(state=updated_state)
 
-    exch = meta.get("exchange") or exchname
-    curr = meta.get("currency")
-    if not _exchange_is_us_ca(exch, currency=curr):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Resolved to non-US/CA listing: exchange='{exch}', currency='{curr}'. Only US/CA supported.",
-        )
 
-    quick = compute_quick_stats(df)
+if __name__ == "__main__":
+    import uvicorn
 
-    # Small JSON response for the frontend
-    return JSONResponse(
-        {
-            "meta": meta,
-            "quick": quick,
-            "tail_ohlcv": df.tail().to_dict(orient="index"),
-        }
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
     )

@@ -1,6 +1,10 @@
-fastapi~=0.121.2
+uvicorn~=0.38.0
+fastapi~=0.122.0
+pydantic~=2.12.4
+langchain-openai~=1.1.0
 numpy~=2.3.5
 pandas~=2.3.3
 yfinance~=0.2.66
 yahooquery~=2.4.1
-uvicorn[standard]~=0.38.0
+langchain-core~=1.1.0
+langgraph~=1.0.4
