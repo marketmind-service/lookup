@@ -514,6 +514,38 @@ def search(state: LookupState) -> LookupState:
         "ticker": symbol,
         "period": period,
         "interval": interval,
+
+        # META (copied EXACTLY as returned)
+        "symbol": meta.get("symbol"),
+        "shortName": meta.get("shortName"),
+        "currency": meta.get("currency"),
+        "exchange": meta.get("exchange"),
+        "marketCap": meta.get("marketCap"),
+        "trailingPE": meta.get("trailingPE"),
+        "forwardPE": meta.get("forwardPE"),
+        "dividendYield": meta.get("dividendYield"),
+        "beta": meta.get("beta"),
+        "fiftyTwoWeekLow": meta.get("fiftyTwoWeekLow"),
+        "fiftyTwoWeekHigh": meta.get("fiftyTwoWeekHigh"),
+        "avgVolume": meta.get("avgVolume"),
+        "sharesOutstanding": meta.get("sharesOutstanding"),
+        "sector": meta.get("sector"),
+        "industry": meta.get("industry"),
+        "website": meta.get("website"),
+        "lastPrice": meta.get("lastPrice"),
+
+        # QUICK STATS
+        "period_return_pct": quick.get("period_return_pct"),
+        "ann_vol_pct": quick.get("ann_vol_pct"),
+        "sma_20": quick.get("sma_20"),
+        "sma_50": quick.get("sma_50"),
+        "sma_200": quick.get("sma_200"),
+        "atr_14": quick.get("atr_14"),
+
+        # TAIL OHLCV
+        "tail_ohlcv": df.tail().to_dict(orient="index"),
+
+        "error": None,
     })
 
 
