@@ -358,7 +358,7 @@ async def parse_input(state: LookupState) -> LookupState:
     print(f"Interval (raw): {ivl_raw}")
     print(f"Interval (norm): {ivl}")
 
-    updates: dict = {"ticker": comp}
+    updates: dict = {"company": comp}
     if per and per != "null":
         updates["period"] = per
     if ivl and ivl != "null":

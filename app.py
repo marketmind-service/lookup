@@ -23,7 +23,7 @@ async def run_lookup(state: AgentState):
 
 
 class DirectLookupRequest(BaseModel):
-    ticker: str
+    company: str
     period: str
     interval: str
 
@@ -31,7 +31,7 @@ class DirectLookupRequest(BaseModel):
 @app.post("/api/lookup", response_model=LookupState)
 async def direct_lookup(req: DirectLookupRequest):
     in_state = LookupState(
-        ticker=req.ticker,
+        company=req.company,
         period=req.period,
         interval=req.interval,
     )
