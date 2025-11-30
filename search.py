@@ -132,8 +132,11 @@ TICKER_RE = re.compile(r"^[A-Z0-9]{1,5}(\.(TO|V|NE|CN))?$")
 
 
 def is_likely_ticker(q: str) -> bool:
-    q = q.strip().upper()
-    return bool(TICKER_RE.match(q))
+    raw = q.strip()
+    if not raw or raw != raw.upper():
+        return False
+
+    return bool(TICKER_RE.match(raw.upper()))
 
 
 def _exchange_is_us_ca(exch: Optional[str], currency: Optional[str] = None) -> bool:
