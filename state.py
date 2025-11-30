@@ -15,6 +15,7 @@ class LookupState(BaseModel):
     # Original request data
     prompt: Optional[str] = None
     ticker: Optional[str] = None
+    company: Optional[str] = None
     period: Optional[str] = None
     interval: Optional[str] = None
     error: Optional[str] = None

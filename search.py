@@ -453,8 +453,8 @@ def yes_no(prompt: str, default_no: bool = True) -> bool:
 
 def search(state: LookupState) -> LookupState:
     print("Stock Lookup Agent")
-    query = state.ticker
-    if not query:
+    company = state.company
+    if not company:
         print("No query provided in state. Exiting lookup node.")
         return state.model_copy(update={
             "error": "[search.py] No ticker provided. Exiting lookup node.",
@@ -468,7 +468,7 @@ def search(state: LookupState) -> LookupState:
     print(f"Using period={period}, interval={interval}")
 
     try:
-        symbol, longname, exchname = resolve_symbol(query)
+        symbol, longname, exchname = resolve_symbol(company)
     except ValueError as ve:
         print(str(ve))
         return state.model_copy(update={
@@ -511,13 +511,12 @@ def search(state: LookupState) -> LookupState:
     print("Done.")
 
     return state.model_copy(update={
-        "ticker": symbol,
+        "company": meta.get("shortName"),
         "period": period,
         "interval": interval,
 
         # META (copied EXACTLY as returned)
         "symbol": meta.get("symbol"),
-        "shortName": meta.get("shortName"),
         "currency": meta.get("currency"),
         "exchange": meta.get("exchange"),
         "marketCap": meta.get("marketCap"),
@@ -558,7 +557,7 @@ def main():
 
     period = prompt_with_default("Period", "1y")
     interval = prompt_with_default("Interval", "1d")
-    want_plot = yes_no("Show charts", default_no=False)
+    want_plot = yes_no("Show charts", default_no=True)
 
     try:
         symbol, longname, exchname = resolve_symbol(query)

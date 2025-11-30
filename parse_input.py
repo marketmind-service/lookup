@@ -173,40 +173,59 @@ def _canonical_from_raw(token: Optional[str]) -> Optional[str]:
     return _canonical_token(value, unit_raw) or token
 
 
-async def ticker(prompt: str) -> Optional[str]:
-    message = [
-        SystemMessage(content=textwrap.dedent("""
-            You are a ticker extractor. Read the user's prompt.
+async def extract_company(prompt: str) -> Optional[str]:
+    messages = [
+        SystemMessage(
+            content=textwrap.dedent("""
+            You extract ONE company or stock from a user's request.
 
-            Return ONLY one JSON object with no spaces and no newline:
-            {"ticker":"<VALUE>"} or {"ticker":null}
+            Output EXACTLY one JSON object with no spaces and no newline:
+            {"company":"<VALUE>"} or {"company":null}
 
             Rules:
-            - If the prompt contains a clear stock ticker (AAPL, NVDA, RY.TO, SHOP.TO), return it uppercased.
-            - ETFs are valid tickers.
-            - If no explicit ticker is present, return null.
-            - No explanations.
-            - No extra text.
-            - No spaces.
-        """).strip()),
+            - VALUE can be:
+              * A stock ticker (NVDA, AAPL, RY.TO, SHOP.TO, QQQ)
+              * OR an official company name (Nvidia, Apple, Royal Bank of Canada)
+            - Fix obvious typos.
+            - Map vague phrases to the most likely company, for example:
+              "the iphone company" -> "Apple"
+              "google stock" -> "Google" or "Alphabet"
+              "NVDA stock" -> "NVDA"
+            - If multiple companies appear, pick the MAIN one the user is asking about.
+            - If you truly cannot infer any company, use null.
+            - No explanations. No extra keys. No spaces anywhere.
+            """).strip()
+        ),
         HumanMessage(content=f"Prompt: {prompt}")
     ]
-    response = query.invoke(message)
+
+    response = query.invoke(messages)
     raw = response.content if isinstance(response.content, str) else str(response.content)
 
     try:
         start, end = raw.find("{"), raw.rfind("}")
         obj = json.loads(raw[start:end + 1])
-        tkr = obj.get("ticker")
-        if not tkr:
-            return None
-        tkr = tkr.upper().strip()
-        if re.fullmatch(r"[A-Z]{1,5}(\.[A-Z]{1,3})?", tkr):
-            return tkr
-    except Exception:
-        pass
 
-    return None
+        comp = obj.get("company")
+        if comp is None:
+            return None
+
+        comp = str(comp).strip()
+        if not comp or comp.lower() == "null":
+            return None
+
+        plain = comp.replace(".", "").replace("-", "")
+        if plain and plain.upper() == plain:
+            return comp.upper()
+
+        return comp
+
+    except Exception:
+        m = re.findall(r"\b[A-Z]{1,5}(?:\.[A-Z]{1,3})?\b", prompt)
+        if m:
+            return m[0].strip().upper()
+        stripped = prompt.strip()
+        return stripped or None
 
 
 async def time_args(prompt: str) -> Tuple[Optional[str], Optional[str]]:
@@ -298,15 +317,14 @@ async def time_args(prompt: str) -> Tuple[Optional[str], Optional[str]]:
             pass
 
         if context_interval_hint:
-            # Only override with the single duration if the model did NOT already
-            # infer a different valid interval (like "1wk" for "weekly candles").
+            # only override with the single duration if the model did NOT already
+            # infer a different valid interval (like 1wk for weekly candles).
             if not llm_interval_is_valid:
                 ivl = single
-                # Only kill period if it is literally the same as the single token
+                # only kill period if it is literally the same as the single token
                 if canon_per == canon_single:
                     per = None
         else:
-            # No strong interval hints, keep your original heuristic
             if unit in {"m", "h"}:
                 ivl = single
                 if canon_per == single and (canon_ivl is None or canon_ivl == single):
@@ -316,7 +334,6 @@ async def time_args(prompt: str) -> Tuple[Optional[str], Optional[str]]:
                 if canon_ivl == single:
                     ivl = None
 
-    # Extra guard: if period uses m or h, drop it and let the stock node infer
     if isinstance(per, str):
         m = re.fullmatch(r"(\d+)\s*([a-zA-Z]+)", per.strip().lower())
         if m:
@@ -331,16 +348,17 @@ async def time_args(prompt: str) -> Tuple[Optional[str], Optional[str]]:
 async def parse_input(state: LookupState) -> LookupState:
     print("parse_input")
 
-    tkr = await ticker(state.prompt)
+    comp = await extract_company(state.prompt)
+
     per, ivl_raw = await time_args(state.prompt)
     ivl = _normalize_interval_for_yf(ivl_raw)
 
-    print(f"Ticker: {tkr}")
+    print(f"Query (company or ticker): {comp}")
     print(f"Period: {per}")
     print(f"Interval (raw): {ivl_raw}")
     print(f"Interval (norm): {ivl}")
 
-    updates: dict = {"ticker": tkr}
+    updates: dict = {"ticker": comp}
     if per and per != "null":
         updates["period"] = per
     if ivl and ivl != "null":
