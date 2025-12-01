@@ -458,9 +458,9 @@ def search(state: LookupState) -> LookupState:
     print("Stock Lookup Agent")
     company = state.company
     if not company:
-        print("No query provided in state. Exiting lookup node.")
+        print("No company provided in state. Exiting lookup node.")
         return state.model_copy(update={
-            "error": "[search.py] No ticker provided. Exiting lookup node.",
+            "error": "[search.py] No company provided. Exiting lookup node.",
         })
 
     period, interval = _resolve_period_interval(

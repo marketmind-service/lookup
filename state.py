@@ -9,6 +9,7 @@ class AgentState(BaseModel):
     route_plan: List[str] = Field(default_factory=list)
     route_taken: List[str] = Field(default_factory=list)
     lookup_result: Optional[LookupState] = None
+    news_result: Optional[Dict[str, Any]] = None
 
 
 class LookupState(BaseModel):
