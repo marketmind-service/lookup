@@ -7,11 +7,10 @@ from lookup_adapters import into_lookup_state, out_of_lookup_state
 
 async def lookup_agent(parent: AgentState):
     in_state = into_lookup_state(parent, LookupState())
-    result = await create_lookup_graph().ainvoke(
+    raw = await create_lookup_graph().ainvoke(
         in_state,
         config=cast(RunnableConfig, cast(object, {"recursion_limit": 100}))
     )
 
-    out_state = out_of_lookup_state(parent, result)
-
+    out_state = out_of_lookup_state(parent, LookupState(**raw))
     return out_state
